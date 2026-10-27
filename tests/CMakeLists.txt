@@ -1,0 +1,9 @@
+cmake_minimum_required(VERSION 3.22)
+project(framework_host_tests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+enable_testing()
+add_executable(remote_protocol_test remote_protocol_test.cpp
+    ../Module/remote/Remote_receiver.cpp)
+target_include_directories(remote_protocol_test PRIVATE ../Module/remote)
+add_test(NAME remote_protocol COMMAND remote_protocol_test)
