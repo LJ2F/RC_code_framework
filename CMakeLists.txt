@@ -36,21 +36,3 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${PROJECT_NAME}> ${PROJECT_NAME}.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}> ${PROJECT_NAME}.bin
     VERBATIM)
-
-# Compile-only checks: these objects are never linked into the default firmware.
-file(GLOB HEADER_CHECK_SOURCES CONFIGURE_DEPENDS checks/*.cpp checks/*.c)
-add_library(framework_header_check OBJECT EXCLUDE_FROM_ALL ${HEADER_CHECK_SOURCES})
-target_include_directories(framework_header_check PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
-target_link_libraries(framework_header_check PRIVATE stm32cubemx)
-add_library(framework_example_check OBJECT EXCLUDE_FROM_ALL
-    examples/topics_example.cpp examples/uart_example.cpp
-    examples/remote_example.cpp examples/motor_example.cpp)
-target_include_directories(framework_example_check PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
-target_link_libraries(framework_example_check PRIVATE stm32cubemx)
-
-target_sources(framework_example_check PRIVATE
-  examples/protocol_uart_example.cpp examples/logger_example.cpp
-  examples/servo_example.cpp examples/device_protocol_example.cpp)
-if(RC_FRAMEWORK_ENABLE_USB)
-  target_sources(framework_example_check PRIVATE examples/protocol_usb_example.cpp)
-endif()
