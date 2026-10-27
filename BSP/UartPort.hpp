@@ -45,6 +45,10 @@ public:
     void onTxCplt();
 
 
+    // Bytes copied synchronously by writeDma per request; zero means borrowed buffer.
+    size_t txCopyCapacity() const noexcept {
+        return tx_use_double_buffer_ ? tx_dma_buf_.Size() : 0U;
+    }
     bool txBusy() const { return tx_busy_; }
 
 
