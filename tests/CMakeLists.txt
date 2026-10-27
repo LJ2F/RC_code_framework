@@ -8,3 +8,7 @@ add_executable(remote_protocol_test remote_protocol_test.cpp
     ../Module/remote/Remote_receiver.cpp)
 target_include_directories(remote_protocol_test PRIVATE ../Module/remote)
 add_test(NAME remote_protocol COMMAND remote_protocol_test)
+
+add_executable(protocol_test protocol_test.cpp)
+target_include_directories(protocol_test PRIVATE ../Algorithm ../Module/transfer_protocol)
+add_test(NAME packet_protocol COMMAND protocol_test)

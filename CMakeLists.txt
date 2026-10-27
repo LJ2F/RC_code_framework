@@ -17,7 +17,7 @@ set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
     Module/controller Module/imu Module/motor
     Module/motor/djiMotor Module/motor/dmMotor Module/motor/vescMotor
-    Module/remote Module/topics)
+    Module/remote Module/topics Module/transfer_protocol)
 target_sources(${PROJECT_NAME} PRIVATE
     APP/app_init/app_init.cpp
     BSP/bsp_dwt.c BSP/CanBus.cpp BSP/UartPort.cpp
