@@ -15,8 +15,10 @@ add_test(NAME remote_protocol COMMAND remote_protocol_test)
 add_executable(protocol_test protocol_test.cpp)
 target_include_directories(protocol_test PRIVATE ../Algorithm ../Module/transfer_protocol)
 add_test(NAME packet_protocol COMMAND protocol_test)
-add_executable(peripheral_test peripheral_test.cpp ../BSP/UartPort.cpp)
-target_include_directories(peripheral_test PRIVATE support ../BSP ../Algorithm ../Module/logger ../Module/servo)
+add_executable(peripheral_test peripheral_test.cpp ../BSP/UartPort.cpp
+  ../Module/xbox/XboxRemote.cpp ../Module/imu/Hwt101.cpp)
+target_include_directories(peripheral_test PRIVATE support ../BSP ../Algorithm
+  ../Module/logger ../Module/servo ../Module/xbox ../Module/infrared_com ../Module/imu)
 add_test(NAME peripherals COMMAND peripheral_test)
 set(USB_ROOT ../Middlewares/ST/STM32_USB_Device_Library)
 add_executable(usb_test usb_test.cpp ../BSP/UsbPort.cpp

@@ -1,6 +1,9 @@
 #include "check.hpp"
 #include "logger.hpp"
 #include "pm20s.hpp"
+#include "infrared_com.hpp"
+#include "XboxRemote.hpp"
+#include "Hwt101.hpp"
 #include <array>
 #include <vector>
 #include <cmath>
@@ -10,6 +13,8 @@ uint32_t mock_isr=0;
 static uint32_t now_tick=0,freq=100;
 static HAL_StatusTypeDef pwm_status=HAL_OK, dma_status=HAL_OK,tx_status=HAL_OK;
 static const uint8_t* dma_ptr=nullptr;static uint16_t dma_len=0;
+static InfraredModule* infrared=nullptr;static bool fast_ack=false,recursive_send=false;
+static uint8_t ack_value=0xF1;
 static std::vector<uint8_t> written;
 extern "C" {
 uint32_t HAL_GetTick(){return now_tick;}
@@ -17,6 +22,8 @@ HAL_StatusTypeDef HAL_TIM_PWM_Start(TIM_HandleTypeDef*,uint32_t){return pwm_stat
 HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef*,const uint8_t* p,uint16_t n){dma_ptr=p;dma_len=n;return dma_status;}
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,uint32_t){
  written.assign(p,p+n);
+ if(recursive_send)CHECK(infrared->emitData(1,2,3)==HAL_BUSY);
+ if(fast_ack){infrared->UartPortRxCbHandler(&ack_value,1);}
  return tx_status;
 }
 HAL_StatusTypeDef HAL_UART_DMAStop(UART_HandleTypeDef*){return HAL_OK;}
@@ -56,5 +63,37 @@ int main(){
  PM20sServo wrong_channel(timer,99,{0,180,500,2500,1000000});CHECK(!wrong_channel.valid());
  reg.ARR=100;CHECK(servo.init()==HAL_ERROR);reg.ARR=19999;
  pwm_status=HAL_ERROR;CHECK(servo.init()==HAL_ERROR);
- std::puts("UART copy, logger and PWM: passed");
+ InfraredModule ir(port);infrared=&ir;CHECK(ir.init()==HAL_OK);
+ int messages=0;ir.setCallback([](const InfraredModule::Message& m,void* p){CHECK(m.address1==1 && m.address2==2 && m.data==3);++*static_cast<int*>(p);},&messages);
+ uint8_t sequence[]{1,2,3,1,2,3};
+ ir.UartPortRxCbHandler(sequence,1);ir.UartPortRxCbHandler(sequence+1,5);CHECK(messages==2);
+ fast_ack=true;CHECK(ir.emitData(7,8,9)==HAL_OK);
+ CHECK((written==std::vector<uint8_t>{0xFA,0xF1,7,8,9}));
+ recursive_send=true;CHECK(ir.emitData(7,8,9)==HAL_OK);recursive_send=false;
+ ack_value=0;CHECK(ir.emitData(7,8,9)==HAL_ERROR);ack_value=0xF1;
+ fast_ack=false;auto before=now_tick;
+ CHECK(ir.emitData(7,8,9,350)==HAL_TIMEOUT && now_tick-before==35); // 100 Hz kernel.
+ now_tick=0xFFFFFFF0U;before=now_tick;
+ CHECK(ir.emitData(7,8,9,350)==HAL_TIMEOUT && uint32_t(now_tick-before)==35);
+ tx_status=HAL_BUSY;CHECK(ir.emitData(7,8,9)==HAL_BUSY);tx_status=HAL_OK;
+ XboxRemote xbox;std::array<uint8_t,36> frame{};
+ frame[0]=0xFC;frame[1]=0xFB;frame[2]=1;frame[3]=28;frame[4]=1;
+ frame[20]=0x12;frame[21]=0x34;frame[34]=0xFD;frame[35]=0xFE;
+ auto feed=[&](uint32_t time){int n=0;for(auto b:frame)n+=xbox.processByte(b,time);return n;};
+ CHECK(feed(100)==1 && !xbox.crcVerified() && xbox.online(449) && !xbox.online(450));
+ CHECK(xbox.getControllerData().btnY && xbox.getControllerData().joyLHori==0x1234);
+ xbox.setChecksum([](const uint8_t* p,size_t n,void*){return n==36 && p[32]==0x42;});
+ CHECK(feed(200)==0);frame[32]=0x42;CHECK(feed(200)==1 && xbox.crcVerified());
+ frame[2]=2;CHECK(feed(200)==0);frame[2]=1;
+ frame[3]=0;CHECK(feed(200)==0);frame[3]=28;
+ xbox.processByte(0xFC,300);CHECK(feed(300)==1); // Overlapping header.
+ frame[35]=0;CHECK(feed(300)==0);frame[35]=0xFE;CHECK(feed(300)==1);
+ Hwt101Parser imu;std::array<uint8_t,11> angle{0x55,0x53,0,0,0,0,0,0x40,0,0,0};
+ auto checksum=[&]{uint8_t s=0;for(int i=0;i<10;++i)s+=angle[i];angle[10]=s;};
+ auto imufeed=[&]{int n=0;for(auto b:angle)n+=imu.processByte(b);return n;};
+ checksum();CHECK(imufeed()==1 && imu.lastFrameIsAngle() && imu.yawDeg()==90 && imu.frameCount()==1);
+ angle[1]=0x51;checksum();CHECK(imufeed()==1 && !imu.lastFrameIsAngle() && imu.validFrameCount()==2 && imu.frameCount()==1);
+ angle[10]^=1;CHECK(imufeed()==0 && imu.validFrameCount()==2);
+ angle[1]=0x53;angle[7]=0xC0;checksum();CHECK(imufeed()==1 && imu.yawDeg()==-90);
+ std::puts("peripherals: passed (real UART copy path, logger, PWM, Xbox, infrared, HWT101)");
 }

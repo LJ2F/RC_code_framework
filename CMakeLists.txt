@@ -21,13 +21,14 @@ set(FRAMEWORK_INCLUDE_DIRS
     Module/controller Module/imu Module/motor
     Module/motor/djiMotor Module/motor/dmMotor Module/motor/vescMotor
     Module/remote Module/topics Module/transfer_protocol
-    Module/logger Module/servo)
+    Module/logger Module/servo Module/xbox Module/infrared_com)
 target_sources(${PROJECT_NAME} PRIVATE
     APP/app_init/app_init.cpp
     BSP/bsp_dwt.c BSP/CanBus.cpp BSP/UartPort.cpp
     Module/controller/pid_controller.c
     Module/motor/djiMotor/djiMotor.cpp
-    Module/remote/Remote_receiver.cpp Module/topics/topics.cpp)
+    Module/remote/Remote_receiver.cpp Module/topics/topics.cpp
+    Module/xbox/XboxRemote.cpp Module/imu/Hwt101.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${PROJECT_NAME} stm32cubemx)
