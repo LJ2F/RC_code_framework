@@ -353,3 +353,8 @@ void FDCAN3_IT1_IRQHandler(void)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+
+#if RC_FRAMEWORK_ENABLE_USB
+extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
+void OTG_HS_IRQHandler(void) { HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS); }
+#endif

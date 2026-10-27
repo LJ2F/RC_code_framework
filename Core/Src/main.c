@@ -27,6 +27,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#if RC_FRAMEWORK_ENABLE_USB
+#include "usb_device.h"
+#include "UsbPortC.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,6 +106,10 @@ int main(void)
   MX_FDCAN2_Init();
   MX_FDCAN3_Init();
   /* USER CODE BEGIN 2 */
+#if RC_FRAMEWORK_ENABLE_USB
+  UsbPort_Prepare();
+  MX_USB_DEVICE_Init();
+#endif
 
   /* USER CODE END 2 */
 
@@ -148,6 +156,10 @@ void SystemClock_Config(void)
   * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+#if RC_FRAMEWORK_ENABLE_USB
+  RCC_OscInitStruct.OscillatorType |= RCC_OSCILLATORTYPE_HSI48;
+  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
+#endif
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;

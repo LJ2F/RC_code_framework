@@ -11,8 +11,11 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+option(RC_FRAMEWORK_ENABLE_USB "Enable USB CDC enumeration" ON)
+add_compile_definitions(RC_FRAMEWORK_ENABLE_USB=$<BOOL:${RC_FRAMEWORK_ENABLE_USB}>)
 add_executable(${PROJECT_NAME})
 add_subdirectory(cmake/stm32cubemx)
+include(cmake/usb.cmake)
 set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
     Module/controller Module/imu Module/motor
@@ -33,7 +36,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     VERBATIM)
 
 # Compile-only checks: these objects are never linked into the default firmware.
-file(GLOB HEADER_CHECK_SOURCES CONFIGURE_DEPENDS checks/*.cpp)
+file(GLOB HEADER_CHECK_SOURCES CONFIGURE_DEPENDS checks/*.cpp checks/*.c)
 add_library(framework_header_check OBJECT EXCLUDE_FROM_ALL ${HEADER_CHECK_SOURCES})
 target_include_directories(framework_header_check PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
 target_link_libraries(framework_header_check PRIVATE stm32cubemx)
