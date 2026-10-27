@@ -47,3 +47,10 @@ add_library(framework_example_check OBJECT EXCLUDE_FROM_ALL
     examples/remote_example.cpp examples/motor_example.cpp)
 target_include_directories(framework_example_check PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
 target_link_libraries(framework_example_check PRIVATE stm32cubemx)
+
+target_sources(framework_example_check PRIVATE
+  examples/protocol_uart_example.cpp examples/logger_example.cpp
+  examples/servo_example.cpp examples/device_protocol_example.cpp)
+if(RC_FRAMEWORK_ENABLE_USB)
+  target_sources(framework_example_check PRIVATE examples/protocol_usb_example.cpp)
+endif()

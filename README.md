@@ -1,6 +1,6 @@
 # RC_code_framework
 
-基于 **STM32H723ZGT6 / Cortex-M7、STM32 HAL、FreeRTOS CMSIS-RTOS2、C11 与 C++23** 的机器人开发框架。从原竞赛工程提取，保留底层通信、设备协议和算法；默认固件只初始化板载外设、DWT、消息队列并运行空闲任务，不创建电机实例，不启动 UART DMA 接收，不发送 CAN 控制帧。
+基于 **STM32H723ZGT6 / Cortex-M7、STM32 HAL、FreeRTOS CMSIS-RTOS2、C11 与 C++23** 的机器人开发框架。从原竞赛工程提取，保留底层通信、设备协议和算法；默认固件初始化板载外设、DWT、消息队列，启用 USB CDC 枚举与服务任务，并运行最小 defaultTask，不创建电机实例，不启动 UART DMA 接收，不发送 CAN 控制帧。
 
 ## 目录
 
@@ -11,7 +11,10 @@
 | Algorithm | 队列、双缓冲、数学工具 |
 | Module/controller | PID、积分限幅、输出滤波、测量微分、增量输出 |
 | Module/motor | MotorBase、DJI C610/C620、VESC、达妙 DM4310 |
-| Module/imu | 维特 0x55/0x53 欧拉角帧解析，单位度 |
+| Module/imu | 维特与 HWT101 欧拉角解析，单位度 |
+| Module/transfer_protocol | 校验算法、PMR 有界帧协议与通用传输适配 |
+| Module/servo / logger / xbox / infrared_com | PWM 舵机、串口日志、Xbox、红外 |
+| USB_DEVICE / Middlewares/ST | USB CDC 接入与 ST USB Device 中间件 |
 | Module/remote | 16 字节遥控协议、CRC、按键、掉线检测 |
 | Module/topics | 静态内存消息发布订阅 |
 | Core / Drivers / Middlewares | CubeMX 生成代码、HAL/CMSIS、FreeRTOS |
@@ -19,7 +22,7 @@
 
 ## 工具链与构建
 
-需要 CMake >= 3.22、Ninja、Arm GNU Toolchain（GCC >= 11），将工具加入 PATH。当前 Cube 工具版本提示保存在 .settings；命令行构建不依赖 Cube 扩展。链接脚本中的 READONLY 段属性要求 GCC 11 或更新版本。
+需要 CMake >= 3.22、Ninja、支持 C++23 的 Arm GNU Toolchain；本次验证基线为 GCC 15.2.1，将工具加入 PATH。当前 Cube 工具版本提示保存在 .settings；命令行构建不依赖 Cube 扩展。链接脚本中的 READONLY 段属性要求 GCC 11 或更新版本。
 
 ```powershell
 cmake --preset Debug
@@ -34,7 +37,7 @@ cmake --build build/Debug --target framework_header_check framework_example_chec
 主机测试使用独立构建目录，不使用 ARM 工具链：
 
 ```powershell
-cmake -S tests -B build/host -G Ninja -DCMAKE_CXX_COMPILER=g++
+cmake -S tests -B build/host -G Ninja '-DCMAKE_C_COMPILER=gcc' '-DCMAKE_CXX_COMPILER=g++'
 cmake --build build/host
 ctest --test-dir build/host --output-on-failure
 ```
@@ -43,7 +46,7 @@ ctest --test-dir build/host --output-on-failure
 
 CubeMX 文件为 RC_code_framework.ioc，使用原 STM32H723ZGT6 引脚、时钟、3 路 FDCAN、USART2/3 与 DMA 配置。两路 UART 当前为 115200 / 8N1，RX DMA 为循环模式；CAN 标称速率为 1 Mbps，经典 CAN，数据最大 8 字节。实际接口、电平、晶振和收发器连接必须与所用板卡一致；这不是跨 STM32 型号的自动适配层。
 
-启动顺序：MPU → HAL → 时钟 → GPIO/DMA/UART/FDCAN 外设配置 → osKernelInitialize → MX_FREERTOS_Init（用户代码区调用 App_Init）→ osKernelStart。App_Init 只调用一次；它初始化 DWT 并初始化已注册订阅者的消息队列。defaultTask 每次延时 1 tick，当前 tick 为 1 ms。
+启动顺序：MPU → HAL → 时钟 → GPIO/DMA/UART/FDCAN 外设配置 → USB 单例构造与一次硬件初始化 → osKernelInitialize → MX_FREERTOS_Init（用户代码区调用 App_Init）→ osKernelStart。App_Init 只调用一次；它初始化 DWT、已注册订阅者的消息队列，并创建 USB 服务任务。USB 可通过 RC_FRAMEWORK_ENABLE_USB=OFF 关闭。defaultTask 每次延时 1 tick，当前 tick 为 1 ms。
 
 保留启动文件中的 __libc_init_array 和链接脚本中的 .init_array，供全局 C++ 对象构造使用。DMA_BUFFER_ATTR 与 .dma_buffer 链接段配套，缓冲放在 RAM_D2，不能随意移入 DTCM。当前配置未启用 D-cache；若后续启用，需自行补充 MPU/cache 一致性处理，32 字节对齐本身不等于缓存一致。
 
@@ -65,3 +68,21 @@ CubeMX 文件为 RC_code_framework.ioc，使用原 STM32H723ZGT6 引脚、时钟
 构建与协议测试结果见 [验证记录](docs/VALIDATION.md)。尚未对提取后的固件进行实物烧录、总线收发、闭环电机或长时间调度验证。
 
 来源、原作者和第三方许可证见 [来源与许可](docs/THIRD_PARTY.md)。本仓库未替原项目新增开源许可证。
+
+## 新增通信与外设
+
+USB 默认开启；其余外设只提供显式接入示例。模块不绑定 UART2/3，不创建机构任务、不产生电机控制动作。
+USB 单次异步发送最多 512 字节，HAL_OK 表示完整请求入队；PMR 协议载荷最多 502 字节，
+发送失败可传回应用。Xbox 默认兼容模式不会声称通过 CRC 验证。
+详细接口、并发约定、内存与超时语义见 [通信与外设说明](docs/COMMUNICATION.md)。
+
+~~~powershell
+# USB 关闭的独立构建目录
+cmake -S . -B build/usb-off -G Ninja '-DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake' '-DCMAKE_BUILD_TYPE=Debug' '-DRC_FRAMEWORK_ENABLE_USB=OFF'
+cmake --build build/usb-off
+# 完整构建矩阵、公共头文件、示例和主机测试
+py tools/validate.py
+~~~
+
+验证脚本需要 Python 3、ARM GCC 与原生 GCC/G++ 在 PATH；日志和 JSON 结果写入 build/validation。
+CubeMX 再生成检查见 [再生成说明](docs/CUBEMX_REGENERATION.md)。
