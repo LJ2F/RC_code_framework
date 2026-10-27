@@ -4,7 +4,7 @@
       "name": "STM32",
       "compileCommands": "${workspaceFolder}/build/Debug/compile_commands.json",
       "cStandard": "c11",
-      "cppStandard": "c++14"
+      "cppStandard": "c++23"
     }
   ],
   "version": 4

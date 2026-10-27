@@ -5,7 +5,7 @@
 ## 环境
 
 - Windows，CMake 4.2.3，Ninja 1.13.2。
-- ARM：Arm GNU Toolchain 15.2.Rel1 / GCC 15.2.1，C11 / C++14，Cortex-M7 硬浮点。
+- ARM：Arm GNU Toolchain 15.2.Rel1 / GCC 15.2.1，C11 / C++23，Cortex-M7 硬浮点。
 - 主机：MinGW-w64 G++ 15.2.0。
 - 芯片配置：STM32H723ZGT6，保留原 CubeMX 配置和 DMA 链接段。
 

@@ -1,6 +1,6 @@
 # RC_code_framework
 
-基于 **STM32H723ZGT6 / Cortex-M7、STM32 HAL、FreeRTOS CMSIS-RTOS2、C11 与 C++14** 的机器人开发框架。从原竞赛工程提取，保留底层通信、设备协议和算法；默认固件只初始化板载外设、DWT、消息队列并运行空闲任务，不创建电机实例，不启动 UART DMA 接收，不发送 CAN 控制帧。
+基于 **STM32H723ZGT6 / Cortex-M7、STM32 HAL、FreeRTOS CMSIS-RTOS2、C11 与 C++23** 的机器人开发框架。从原竞赛工程提取，保留底层通信、设备协议和算法；默认固件只初始化板载外设、DWT、消息队列并运行空闲任务，不创建电机实例，不启动 UART DMA 接收，不发送 CAN 控制帧。
 
 ## 目录
 
