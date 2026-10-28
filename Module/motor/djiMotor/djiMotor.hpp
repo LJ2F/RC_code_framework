@@ -34,7 +34,7 @@ public:
                 deg_speed_pid_.Kp = speed_kp;
                 deg_speed_pid_.Ki = speed_ki;
                 deg_speed_pid_.Kd = speed_kd;
-                deg_speed_pid_.Maxout = speed_max_out;
+                deg_speed_pid_.MaxOut = speed_max_out;
                 deg_speed_pid_.IntegralLimit = speed_Integral_Limit;
 
                 deg_speed_pid_.Output_LPF_RC = output_filter_rc;
@@ -45,7 +45,7 @@ public:
                 deg_pid_.Kp = deg_kp;
                 deg_pid_.Ki = deg_ki;
                 deg_pid_.Kd = deg_kd;
-                deg_pid_.Maxout = deg_max_output;
+                deg_pid_.MaxOut = deg_max_output;
                 deg_pid_.IntegralLimit = deg_Integral_Limit;
 
                 deg_pid_.Output_LPF_RC = output_filter_rc;
@@ -125,7 +125,7 @@ public:
                 deg_speed_pid_.Kp = speed_kp;
                 deg_speed_pid_.Ki = speed_ki;
                 deg_speed_pid_.Kd = speed_kd;
-                deg_speed_pid_.Maxout = speed_max_out;
+                deg_speed_pid_.MaxOut = speed_max_out;
                 deg_speed_pid_.IntegralLimit = speed_max_IL;
 
                 deg_speed_pid_.Output_LPF_RC = output_filter_rc;
@@ -136,7 +136,7 @@ public:
                 deg_pid_.Kp = deg_kp;
                 deg_pid_.Ki = deg_ki;
                 deg_pid_.Kd = deg_kd;
-                deg_pid_.Maxout = deg_max_out;
+                deg_pid_.MaxOut = deg_max_out;
                 deg_pid_.IntegralLimit = deg_max_IL;
 
                 deg_pid_.Output_LPF_RC = output_filter_rc;

@@ -9,7 +9,9 @@
 | APP/app_init | C/C++ 共用的最小应用入口 App_Init |
 | BSP | CanBus / CanDevice、UartPort、DWT、DMA 缓冲属性 |
 | Algorithm | 队列、双缓冲、数学工具、可选固定尺寸矩阵/向量 |
-| Module/controller | PID、积分限幅、输出滤波、测量微分、增量输出 |
+| Module/controller | R2 原版 PID，替换原框架 PID |
+| Module/movebase | R2 原版 S 曲线规划器 |
+| Module/PCcom | 保留原结构的 UART/USB 上位机通信，业务入口留空 |
 | Module/motor | MotorBase、DJI C610/C620、VESC、达妙 DM4310 |
 | Module/imu | 维特与 HWT101 欧拉角解析，单位度 |
 | Module/transfer_protocol | 校验算法、PMR 有界帧协议与通用传输适配 |
@@ -112,6 +114,41 @@ CMSIS-DSP 来自 [ARM-software/CMSIS-DSP v1.16.2](https://github.com/ARM-softwar
 尚未上板执行矩阵运算，也未测量实际执行时间及任务栈峰值。
 
 
+## R2 PID、S 曲线和 PCcom
+
+三个模块直接加入 CMake 源码列表，不增加模块开关。应用按需包含头文件、
+实例化和调用；默认应用不创建这些对象或新增任务。
+
+- `Module/controller/pid_controller.h/.c`：用 R2 原文件替换旧 PID，
+  不改算法、结构体、枚举或初始化逻辑。使用 `PID_t`、`PID_Init`、
+  `PID_Calculate`、`PID_Reset`，输出上限字段为 `MaxOut`。
+  PID 对象先清零，参数由应用填写；计算仍使用原 DWT 时间路径。
+- `Module/movebase/pathplanning.h/.cpp`：按 R2 原文件复制，
+  保留八参数 `SCurvePlanner` 构造、`update(dt)` 返回速度、
+  `progress()` 和 `reset(offset)`。未重写规划公式或边界处理。
+- `Module/PCcom/PCcom.hpp/.cpp`：保留原类、UART/USB 构造和
+  `init/ProcessRx/ProcessTx/OnPacket`。删除比赛命令、Topics、夹爪、
+  二维码和导航业务；`OnPacket` 与 `ProcessTx` 留空，由应用填写。
+  没有加入新的通用回调接口。
+
+PCcom 先构造再显式调用 `init()`；同一个通信任务调用 `ProcessRx()`。
+公开的 `send(code, msg)` 模板放在头文件，仍按原方式发送对象字节；
+字段布局、字节序和对端格式由应用约定。发送返回底层是否接受本次请求，
+不代表对端已收到。UART 保留阻塞 `write`，USB 使用框架现有的
+`writeAsync`，受已有 USB 开关控制。帧协议、PMR 内存路径保持不变。
+
+为匹配 R2 PID，经确认只把 DJI/VESC 两个头文件内共 6 处
+`.Maxout` 引用改为 `.MaxOut`，其余电机内容未改。
+来源署名和原版权头保留；PID 与 S 曲线四个文件经字节比对与 R2 一致。
+
+验证（2026-10-28）：Arm GNU GCC 15.2.1、C++23，
+Debug/Release × USB 开/关四组全新构建通过；另两组 ARM 实例化链接
+实际引用 PID、S 曲线和 PCcom，并编译全部电机头文件，通过。
+PCcom 主机模拟检查覆盖原 UART 阻塞路径、USB 路径、发送状态回传、
+最大载荷/超长拒绝和接收队列消费。测试放在本机临时目录，
+没有恢复 checks、tests、examples、tools、docs。
+本次没有验证原 PID/S 曲线的控制性能、轨迹精度或实物收发。
+
 ## 板级配置与启动
 
 CubeMX 文件为 RC_code_framework.ioc，使用原 STM32H723ZGT6 引脚、时钟、3 路 FDCAN、USART2/3 与 DMA 配置。两路 UART 当前为 115200 / 8N1，RX DMA 为循环模式；CAN 标称速率为 1 Mbps，经典 CAN，数据最大 8 字节。实际接口、电平、晶振和收发器连接必须与所用板卡一致；这不是跨 STM32 型号的自动适配层。
@@ -195,6 +232,9 @@ main 中先构造 USB 单例再初始化 USB 硬件，且只初始化一次；de
 | XboxRemote | 老冯 / Keten，保留字段与主要访问接口 |
 | Logger、infrared_com | zhy (Howie41)，2026 |
 | Hwt101Parser | YE，2026 |
+| PID | 大帅将军，R2 pid_controller.h/.c 原文件，2026 |
+| SCurvePlanner | 冯大帅将军，R2 pathplanning.h/.cpp 原文件，2025 |
+| PcCom | R2 Module/PCcom，原文件没有独立作者/许可证头 |
 | gdut 函数包装器、数据帧、校验算法 | R2 Algorithm/function.hpp 与 Module/transfer_protocol，原文件没有明确作者署名 |
 | USB Device、USB 生成代码与 HAL PCD/LL | STMicroelectronics，保持原版权头；USB 许可证见 Middlewares/ST/STM32_USB_Device_Library/LICENSE.txt |
 

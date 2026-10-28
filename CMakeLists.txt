@@ -21,7 +21,7 @@ include(cmake/usb.cmake)
 include(cmake/matrix.cmake)
 set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
-    Module/controller Module/imu Module/motor
+    Module/controller Module/movebase Module/PCcom Module/imu Module/motor
     Module/motor/djiMotor Module/motor/dmMotor Module/motor/vescMotor
     Module/remote Module/topics Module/transfer_protocol
     Module/logger Module/servo Module/xbox Module/infrared_com)
@@ -29,6 +29,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     APP/app_init/app_init.cpp
     BSP/bsp_dwt.c BSP/CanBus.cpp BSP/UartPort.cpp
     Module/controller/pid_controller.c
+    Module/movebase/pathplanning.cpp Module/PCcom/PCcom.cpp
     Module/motor/djiMotor/djiMotor.cpp
     Module/remote/Remote_receiver.cpp Module/topics/topics.cpp
     Module/xbox/XboxRemote.cpp Module/imu/Hwt101.cpp)
