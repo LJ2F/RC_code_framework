@@ -12,10 +12,13 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(RC_FRAMEWORK_ENABLE_USB "Enable USB CDC enumeration" ON)
+option(RC_FRAMEWORK_ENABLE_MATRIX "Enable fixed-size matrices and minimal CMSIS-DSP" OFF)
+add_compile_definitions(RC_FRAMEWORK_ENABLE_MATRIX=$<BOOL:${RC_FRAMEWORK_ENABLE_MATRIX}>)
 add_compile_definitions(RC_FRAMEWORK_ENABLE_USB=$<BOOL:${RC_FRAMEWORK_ENABLE_USB}>)
 add_executable(${PROJECT_NAME})
 add_subdirectory(cmake/stm32cubemx)
 include(cmake/usb.cmake)
+include(cmake/matrix.cmake)
 set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
     Module/controller Module/imu Module/motor

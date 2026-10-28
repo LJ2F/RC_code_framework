@@ -8,7 +8,7 @@
 |---|---|
 | APP/app_init | C/C++ 共用的最小应用入口 App_Init |
 | BSP | CanBus / CanDevice、UartPort、DWT、DMA 缓冲属性 |
-| Algorithm | 队列、双缓冲、数学工具 |
+| Algorithm | 队列、双缓冲、数学工具、可选固定尺寸矩阵/向量 |
 | Module/controller | PID、积分限幅、输出滤波、测量微分、增量输出 |
 | Module/motor | MotorBase、DJI C610/C620、VESC、达妙 DM4310 |
 | Module/imu | 维特与 HWT101 欧拉角解析，单位度 |
@@ -31,6 +31,86 @@ cmake --build --preset Release
 ```
 
 产物在 build/Debug 或 build/Release 下：RC_code_framework.elf、.hex、.bin、.map。使用自己的 ST-Link/J-Link/DAPLink 工具烧录；仓库不包含本机绝对路径或自动烧录脚本。
+
+
+## 可选矩阵计算
+
+`Algorithm/matrix.hpp` 提供 C++23 固定尺寸的 `gdut::matrix<float/double, Rows, Cols>`
+和列向量 `gdut::vector<float/double, Rows>`。支持加减、矩阵/标量乘法、转置、
+行列式、求逆、单位矩阵/常量矩阵、范数/归一化、点积/叉积和 4×4 缩放、平移、旋转矩阵。
+存储为行优先；`a[row, col]` 是 C++23 多参数下标，列向量也支持 `v[index]`。
+只支持 float 和 double，尺寸在编译期检查；不创建任务、不分配动态内存。
+
+默认关闭。需要使用时重新配置：
+
+```powershell
+cmake --preset Debug -DRC_FRAMEWORK_ENABLE_MATRIX=ON
+cmake --build --preset Debug
+cmake --preset Release -DRC_FRAMEWORK_ENABLE_MATRIX=ON
+cmake --build --preset Release
+```
+
+CMake 会自动提供矩阵头文件路径，并编译本仓库附带的 CMSIS-DSP 最小矩阵后端；
+无需联网下载，也无需启用其他外设。关闭时使用 `-DRC_FRAMEWORK_ENABLE_MATRIX=OFF`，
+不编译或链接该后端。开关状态保存在各自构建目录的 CMake 缓存中。
+
+```cpp
+#include "matrix.hpp"
+
+void calculate() {
+    using Mat2 = gdut::matrix<float, 2, 2>;
+    const Mat2 a{4.0f, 7.0f, 2.0f, 6.0f};
+    const auto product = a * a.transpose();
+    Mat2 inverse;
+    if (a.try_inverse(inverse)) {
+        const float first = inverse[0, 0];
+        (void)first;
+    }
+    (void)product;
+}
+```
+
+- 推荐 `try_inverse(out)`：奇异矩阵、非有限输入或产生非有限逆矩阵时返回 false，
+  保留 out 原值；支持输入输出为同一对象，不改变独立的输入矩阵。
+- `inverse()` 保留兼容接口：失败时触发 assert；关闭断言时返回零矩阵。
+  `is_invertible()` 通过尝试求逆判断，避免用固定行列式阈值误判缩放后的小矩阵。
+  这些接口不估计条件数，病态矩阵仍需应用按精度要求处理。
+- 默认构造清零；`build_but_not_clean_mat` 不初始化元素，使用前必须完整赋值。
+  范数使用 hypot 避免直接平方导致的溢出；零向量归一化仍为零，
+  零旋转轴产生单位矩阵，旋转角单位为弧度。
+- 数组、运算结果和求逆/LU 分解临时缓冲都可能占用任务栈。
+  单个矩阵数据为 `Rows * Cols * sizeof(T)` 字节；矩阵大小和任务栈需一起规划。
+  支持 double 不等于已验证实时性能。
+- 此后端仅包含矩阵包装实际调用的 10 个 CMSIS-DSP C 函数和 6 个依赖头文件，
+  不代表提供完整 CMSIS-DSP API。Cortex-M7/FPU/浮点 ABI 沿用工程工具链，
+  没有复制来源仓库的 Cortex-M4 配置。
+
+来源：矩阵包装迁自
+[robocon-library/DSP/matrix.hpp](https://github.com/gdut-robocon11-second-group/robocon-library/blob/d21b3ccf822901dd22ba1e319298a8bdae3eaff7/DSP/matrix.hpp)，
+基线提交 `d21b3ccf822901dd22ba1e319298a8bdae3eaff7`。
+原文件没有单独的作者/许可证头，本次保留原声明和注释，注明来源，不为其另加许可证。
+本地适配增加了直接依赖头、尺寸检查、可检查失败的求逆及数值边界处理。
+
+CMSIS-DSP 来自 [ARM-software/CMSIS-DSP v1.16.2](https://github.com/ARM-software/CMSIS-DSP/tree/v1.16.2)，
+提交 `d5717e454fec0337bef114a21f1d2d01d74f2701`。
+附带文件保持上游内容和版权头；Apache-2.0 许可证见
+`Middlewares/Third_Party/CMSIS-DSP/LICENSE`。
+
+### 矩阵模块验证记录（2026-10-28）
+
+| 项目 | 结果 |
+|---|---|
+| 固件全新构建 | Arm GNU GCC 15.2.1，Debug/Release × 矩阵开/关 × USB 开/关，共 8 组通过 |
+| 主机数值检查 | GCC 15.2.0，Debug 13,545 项、Release 13,557 项，全部通过；检查期间没有 C++ 堆分配 |
+| 数学与失败路径 | float/double、小矩阵及 CMSIS 大矩阵路径、矩形乘法/转置、LU 行列式、主元交换、求逆、缩放小矩阵、奇异/非有限输入、向量和变换 |
+| 编译约束 | 非浮点元素、零维度、超出 CMSIS 尺寸范围及乘法维度不匹配均被拒绝 |
+| 目标架构检查 | Cortex-M7 C++23 接口实例化、10 个后端函数可重定位链接通过，无未解析的矩阵后端符号 |
+| 未使用时的固件占用 | 同一构建类型和 USB 配置下，矩阵开/关的 Flash、RAM 使用量相同 |
+| 来源与修改保护 | 17 个 CMSIS-DSP 文件与上游 Git blob 校验一致；两个来源工程和框架电机模块内容、来源工程 Git 状态及暂存区保持不变 |
+
+验证程序和脚本放在本机临时目录，没有重新加入 checks、tests、examples、tools 或 docs。
+尚未上板执行矩阵运算，也未测量实际执行时间及任务栈峰值。
+
 
 ## 板级配置与启动
 
@@ -98,6 +178,7 @@ main 中先构造 USB 单例再初始化 USB 硬件，且只初始化一次；de
 |---|---|
 | STM32H7 HAL | `Drivers/STM32H7xx_HAL_Driver/LICENSE.txt` |
 | CMSIS | `Drivers/CMSIS/LICENSE.txt` |
+| CMSIS-DSP v1.16.2 矩阵子集 | `Middlewares/Third_Party/CMSIS-DSP/LICENSE` |
 | STM32H7 CMSIS Device | `Drivers/CMSIS/Device/ST/STM32H7xx/LICENSE.txt` |
 | FreeRTOS | `Middlewares/Third_Party/FreeRTOS/Source/LICENSE` |
 

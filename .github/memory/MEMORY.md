@@ -6,3 +6,5 @@
 - USB 单一服务任务拥有发送缓冲；只有完成或确认端点终止才允许复用。
 - PMR 保留默认动态内存路径，帧长上限不等于无堆实现。
 - 修改后验证 Debug/Release 固件构建及 USB 开/关；接口限制和再生成注意事项见 README.md。
+
+- 可选矩阵为 Algorithm/matrix.hpp，RC_FRAMEWORK_ENABLE_MATRIX 默认关闭；只引入 CMSIS-DSP 矩阵子集。优先使用 try_inverse(out)，不要恢复检查/示例/测试/工具/文档目录。
