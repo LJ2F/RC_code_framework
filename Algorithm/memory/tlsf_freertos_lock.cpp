@@ -27,7 +27,7 @@ bool running_task_context() noexcept {
            interrupts_unmasked();
 }
 
-} // namespace
+} // 匿名命名空间结束
 
 bool Tlsf_FreeRTOS_Lock::init() noexcept {
     if (handle_ != nullptr || !lifecycle_context()) {

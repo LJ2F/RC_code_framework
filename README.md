@@ -114,6 +114,279 @@ CMSIS-DSP 来自 [ARM-software/CMSIS-DSP v1.16.2](https://github.com/ARM-softwar
 尚未上板执行矩阵运算，也未测量实际执行时间及任务栈峰值。
 
 
+## 可选 TLSF 内存池与 FreeRTOS 同步
+
+面向当前 STM32H723 + C++23 工程，提供固定容量池、诊断统计、显式 PMR 适配和可选同步。
+原始池、PMR 和 get_state 共用池内同一把可选锁；不更换全局 new/delete、
+FreeRTOS 堆或默认 PMR 资源，不自动扩容、创建池/任务，不改变现有 DMA 缓冲或通信资源路径。
+
+| 配置 | 行为 |
+|---|---|
+| TLSF=OFF、TLSF_FREERTOS=OFF（默认） | 不编译 TLSF 组件 |
+| TLSF=ON、TLSF_FREERTOS=OFF | 核心、池、PMR、通用锁接口；默认构造不加锁，也可注入自定义锁 |
+| TLSF=ON、TLSF_FREERTOS=ON | 额外编译独立的 FreeRTOS 静态互斥锁后端 |
+| TLSF=OFF、TLSF_FREERTOS=ON | 配置报错，避免无效组合 |
+
+两个完整开关名是 RC_FRAMEWORK_ENABLE_TLSF、RC_FRAMEWORK_ENABLE_TLSF_FREERTOS，默认均 OFF。
+它们与 USB、矩阵开关独立，状态保存在各构建目录的 CMake 缓存中。
+
+```powershell
+cmake --preset Debug -DRC_FRAMEWORK_ENABLE_TLSF=ON -DRC_FRAMEWORK_ENABLE_TLSF_FREERTOS=ON
+cmake --build --preset Debug
+cmake --preset Release -DRC_FRAMEWORK_ENABLE_TLSF=ON -DRC_FRAMEWORK_ENABLE_TLSF_FREERTOS=ON
+cmake --build --preset Release
+```
+
+只使用单任务池时关闭 TLSF_FREERTOS；完全关闭时两个选项都设为 OFF。
+启用 FreeRTOS 后端不要求联网下载。CubeMX 再生成后保留根 CMake 的开关、宏定义和
+include(cmake/tlsf.cmake)，沿用当前 FreeRTOS include/port 配置。
+
+### 原始池与 PMR
+
+`Algorithm/memory/tlsf_pool.hpp/.cpp` 保留使用者的 Tlsf_Pool 类名和小写接口：
+
+- `Tlsf_Pool pool;` 不加锁，要求单任务独占；`Tlsf_Pool pool(&lock);` 借用可选锁，
+  不允许运行时换锁，锁须覆盖池的生命周期。
+- `init(buffer, bytes)` 借用调用者真实可写的固定区域；分别检查控制结构创建和加入区域。
+  拒绝重复初始化；容量包含管理开销，不等于用户可申请总量。
+- `try_allocate(bytes, alignment)` 失败返回 nullptr；零长度、非法对齐、未初始化、
+  超大请求和耗尽均可报告失败。释放须回原池且仅一次，deallocate(nullptr) 无操作。
+- 分配得到原始存储，不自动构造对象；deallocate 不析构对象，也不验证错误指针。
+  支持显式 add_region 加入区域；不支持移除、重置、池复制/移动、自动扩容或上游堆兜底。
+- init/add_region/try_allocate/deallocate/is_initialized/get_state 的状态读取、计数更新及 TLSF 操作
+  均处于同一个 guard 内；内部直接检查 handle_，避免嵌套获取非递归锁。
+- 析构要求独占、所有调用和分配已结束；不能用析构加锁来允许并发销毁。
+  锁仅保护分配器，不自动同步容器或用户数据。
+
+`Tlsf_Memory_Resource` 借用池引用，显式传给 std::pmr 容器：
+
+```cpp
+#include "tlsf_memory_resource.hpp"
+#include <vector>
+
+void single_task_example() {
+    alignas(std::max_align_t) static std::byte arena[16 * 1024];
+    Tlsf_Pool pool;
+    if (!pool.init(arena, sizeof(arena))) {
+        return;
+    }
+    Tlsf_Memory_Resource resource(pool);
+    {
+        std::pmr::vector<int> values(&resource);
+        values.reserve(32);
+        values.push_back(42);
+    } // 缓冲归还池，之后才允许销毁 resource 和 pool
+}
+```
+
+例子的 16 KiB 只是使用示意，不代表默认固件预留了这块 RAM。
+容器复制也应显式传资源；clear 不表示释放容量。元素内部的其他普通分配不自动改用本池。
+零字节资源申请按一字节处理，资源按对象身份比较相等，资源禁止复制/移动；
+本例一个池使用一个资源对象。存储、池和资源必须覆盖全部使用者生命周期。
+
+PMR 分配失败不是正常的 nullptr 返回：无异常工程中先执行可选 noexcept 故障回调，
+若回调返回则 std::abort()，不把空指针交给容器。需要恢复的操作继续使用原始接口。
+池返回失败前 guard 已解锁，故障回调不在池锁内执行；回调避免再次分配内存。
+
+### FreeRTOS 静态互斥锁
+
+`tlsf_freertos_lock.hpp/.cpp` 提供 Tlsf_FreeRTOS_Lock。
+对象内置 StaticSemaphore_t，经 xSemaphoreCreateMutexStatic 显式创建标准 mutex，
+不从 FreeRTOS 堆分配控制块，不使用二值信号量替代 mutex；使用内核的优先级继承机制。
+
+- 构造不调用 RTOS。lock.init() 在发布给其他任务前独占调用，可在调度器启动前创建；
+  重复初始化、ISR/挂起态、运行任务中屏蔽中断或创建失败返回 false。
+- **带此后端的池操作必须在调度器运行的普通任务中进行。**
+  即使 mutex 已在启动前创建，也不能把 pool.init() 放到全局构造或当前 App_Init
+  （它在 osKernelStart 前运行）中；应在初始化任务中完成，再发布就绪通知。
+- lock 使用 portMAX_DELAY 等待；要求 INCLUDE_vTaskSuspend=1，不忙等，也不把竞争报成内存不足。
+- 未初始化、ISR、调度器未运行/挂起、PRIMASK/BASEPRI/FAULTMASK 屏蔽状态、
+  同任务递归获取、非持有者释放或底层 take/give 错误均 std::abort()。
+- init 与析构必须独占，锁长于池；析构时不能有持有者或等待者，静态句柄由 vSemaphoreDelete 清理。
+  不得在持锁期间强制删除任务；RAII 不承诺 abort、HardFault 或直接删任务时执行析构。
+
+下面只是应用接入示意，不编入默认应用：
+
+```cpp
+#include "tlsf_freertos_lock.hpp"
+#include "tlsf_memory_resource.hpp"
+#include "main.h"
+#include <vector>
+
+namespace {
+alignas(std::max_align_t) std::byte memory[16 * 1024];
+Tlsf_FreeRTOS_Lock memory_lock;
+Tlsf_Pool memory_pool(&memory_lock);
+Tlsf_Memory_Resource memory_resource(memory_pool);
+}
+
+// 由一个普通运行任务调用一次，然后再通知其他任务“内存池已就绪”。
+void memory_init_in_task() {
+    if (!memory_lock.init() ||
+        !memory_pool.init(memory, sizeof(memory))) {
+        Error_Handler();
+    }
+}
+
+// 就绪之后各任务使用自己的容器，共享此 resource；同一容器需另行同步。
+void use_memory_from_task() {
+    std::pmr::vector<int> values(&memory_resource);
+    values.reserve(32);
+    values.push_back(42);
+}
+```
+
+后端独立目标 rc_framework_tlsf_freertos 才依赖当前板级/FreeRTOS 头文件；
+核心与通用锁接口仍可主机编译。需要 static allocation、mutex、
+scheduler-state/holder 查询和无限等待支持，当前 FreeRTOSConfig.h 已具备。
+本轮不修改 UART/CAN、业务任务、FreeRTOS 堆、Topics 或默认通信资源。
+
+### 统计与开销
+
+get_state() 返回 tlsf_pool_state：initialized、capacity_bytes、free_bytes、
+used_block_bytes、largest_free_block、free_block、used_block、
+allocation_failures、peak_used_block_bytes、region_count。
+
+- 容量是初始上界；已用量按 TLSF 内部块大小统计，不等于用户请求长度，
+  块头开销使 free_bytes + used_block_bytes 不必等于 capacity_bytes。
+- 失败次数按对象生命周期累计，覆盖未初始化、非法参数、超大请求和底层失败，
+  每次调用仅计一次，在 size_t 最大值饱和；成功初始化不清零。
+- 峰值按已用块内部大小之和累计，释放后不降低，不包含全部管理开销。
+- get_state 是 O(块数)，持锁覆盖完整遍历，低频调用；不能把容器扩容、复制、
+  锁等待和遍历统计整体当作固定执行时间。
+- CPU 存储与 DMA 能力分开；本轮没有引入动态 DMA 池或缓存一致性方案。
+
+### 最大区域容量与控制结构裁剪
+
+RC_FRAMEWORK_TLSF_MAX_POOL_SIZE 默认 65536（64 KiB），通过 PUBLIC 宏
+TLSF_MAX_POOL_SIZE 同时传给 C 核心、池封装和使用者。它限制的是每次 init/add_region
+传入区域的总字节数，不是所有区域的容量总和；首段还包含唯一的 TLSF 控制结构。
+
+支持十进制 1024..1073741824；0 恢复上游架构相关索引范围。
+非 2 的幂容量采用向上取整的索引位数，但 init/add_region 仍按精确字节上限检查。
+这个值是整个 TLSF 库的编译配置，不是每个对象独立的参数，改变后须重新构建。
+超过限制会在写入候选区域前返回 false；过小首段仍可能因控制结构开销而被拒绝。
+
+```powershell
+# 最大单段为 4 KiB；应用示例的区域也要相应缩小。
+cmake --preset Debug -DRC_FRAMEWORK_ENABLE_TLSF=ON -DRC_FRAMEWORK_TLSF_MAX_POOL_SIZE=4096
+cmake --build --preset Debug
+```
+
+上面的 16 KiB 用法示例适用于默认 64 KiB 配置；区域大小必须与当前上限匹配。
+关闭 TLSF 不预留这些空间；64 KiB 只是允许的单段上限，不是默认占用量。
+
+ARM32 控制结构由 Cortex-M7 编译后的符号大小核对（不是实机耗时测量）：
+
+| 单段上限配置 | 一级索引数量 | TLSF 控制结构 |
+|---|---:|---:|
+| 0，保留上游范围 | 24 | 3188 B |
+| 65536，默认 | 10 | 1340 B |
+| 16384 | 8 | 1076 B |
+| 6000，非 2 的幂 | 7 | 944 B |
+| 4096 | 6 | 812 B |
+| 1024 | 4 | 548 B |
+
+上述数值只统计 C 核心控制结构。当前 Tlsf_Pool 对象另占 ARM32 128 B，
+包含 8 段静态登记表；锁、PMR 资源、每段边界及每个分配块还各有开销。
+公共控制结构只在首段占用一次；池对象内登记表不占用借入区域，也不从上游堆分配。
+
+### 同一控制结构加入多个区域
+
+init 建立首段及公共控制结构；add_region 显式加入后续区域。
+首段只支付一次控制结构开销，后续段各自仍有池边界和块管理开销。
+
+```cpp
+#include "tlsf_pool.hpp"
+
+namespace {
+alignas(std::max_align_t) std::byte region_a[4096];
+alignas(std::max_align_t) std::byte region_b[4096];
+Tlsf_Pool pool; // 单任务；多任务时注入同一把已初始化的锁。
+}
+
+bool initialize_regions() {
+    if (!pool.init(region_a, sizeof(region_a))) {
+        return false;
+    }
+    return pool.add_region(region_b, sizeof(region_b));
+}
+```
+
+以上数组只是接口示例，没有指定物理内存区。应用可以通过链接脚本/section 放到不同
+CPU 可访问区域；本次不自动预留 DTCM、AXI SRAM 或 DMA 专用池。
+
+- 最多 8 段（含首段），由 Tlsf_Pool::max_regions 表示；登记表在池对象内，不动态分配。
+- 加入前检查初始化状态、空地址、对齐、容量、地址加法溢出、区域重叠和登记上限。
+  首段的控制结构地址范围也受保护；失败不修改候选区域或现有分配。
+- 已有分配允许继续存活，显式加入后仍有效；不提供移除、重置或自动加段。
+- 所有段共用同一 TLSF 控制结构、资源和可选锁；add_region 也持这把锁。
+  FreeRTOS 后端要求在普通运行任务中调用，且必须先完成独占初始化和就绪通知。
+- get_state 的 region_count 返回已登记段数；容量、空闲量和块数汇总所有段，
+  largest_free_block 取所有段中最大的单个空闲块。
+- 单次分配不能拼接两个区域；即使地址相邻也保持独立边界。
+  总空闲量大于请求长度，不代表存在足够大的连续块。
+- 不按区域的速度或 DMA 属性选择内存；不能把“可用于 DMA 的段”和“仅 CPU 可用的段”
+  混在同一个资源中，再假设分配结果必定适合 DMA。32 字节对齐也不保证缓存一致性。
+- 每一段、池、锁和资源须覆盖全部分配生命周期；不得交给其他分配器重复管理。
+  默认程序仍不实例化这些示例对象。
+
+### 来源、验证与限制
+
+原始 TLSF 3.1 来自 [mattconte/tlsf](https://github.com/mattconte/tlsf)，固定提交
+deff9ab509341f264addbd3c8ada533678591905，与原 robocon-library 引用一致。
+核心以该提交为基线，现已加入容量裁剪与边界检查补丁；版权/BSD 三条款原文见 tlsf.h；版本/blob 校验和换行保护见
+Middlewares/Third_Party/TLSF/SOURCE.md。使用者手写池、统计、PMR 和 guard 的署名保留。
+第四轮由助手直接补齐统一同步与 FreeRTOS 后端；没有给原作品新增或替换许可。
+
+本机验证材料只放临时目录，不恢复 checks/tests/examples/tools/docs。
+构建、主机回归与 FreeRTOS API 边界模拟的实际结果在本节末尾记录。
+模拟使用主机互斥，不执行真实 ARM 调度器，不能代替实物调度/优先级继承验证。
+
+容量裁剪与多区域接入已实现；后续尚未实施通信模块显式注入资源。实机内存与时序测量仍待完成。
+未上板验证：多任务长期压力、锁等待/优先级继承时序、任务栈高水位及错误停机路径。
+
+
+
+### 第四轮同步验收（2026-10-30）
+
+- Arm GNU GCC 15.2.1、C11/C++23，全新 Debug/Release × USB 开/关 ×
+  TLSF 关闭/核心开启/FreeRTOS 后端开启，共 12 组构建通过；矩阵关闭。
+- 拒绝 TLSF=OFF 而 TLSF_FREERTOS=ON 的非法配置。
+- 主机 GCC 15.2.0、无异常/RTTI，Debug/Release 基础池、计数、快照、guard、
+  原始接口/PMR 共享锁以及 PMR 故障回调回归通过。
+- 两类四线程压力检查分别覆盖通用主机锁和实际后端经模拟 FreeRTOS API 运行；
+  统计/计数一致，全部释放后合并恢复，故障回调执行前池锁已释放。
+- 后端静态创建/删除、启动前创建、重复初始化、创建失败重试及无效 init 上下文通过；
+  每种构建覆盖 13 条终止路径：未初始化 lock/unlock、未启动/挂起、ISR、
+  三类中断屏蔽、take/give 错误、递归、非持有者释放及持有时析构。
+- Debug/Release 各链接一个真实引用 FreeRTOS 后端、池和 PMR vector 的 ARM 测试固件，
+  使用现有内核和板级对象；测试固件仅在临时目录，未替换默认产物或烧录。
+- 同一构建类型和 USB 状态下，三种开关配置未实例化时的最终 text/data/bss 相同。
+- 来源工程、电机、其他业务与编辑器修改保持原样，未暂存、提交或推送。
+  实物调度、优先级继承/锁等待时序和栈峰值未测。
+
+### 容量裁剪与多区域验收（2026-10-30）
+
+- Arm GNU GCC 15.2.1：Debug/Release × USB 开/关 × TLSF 关闭/核心/FreeRTOS 后端
+  的 12 组默认配置，加 Debug/Release 4 KiB、Debug 非整次幂 6000 B、
+  Release 原范围 0，共 16 组全新固件构建通过，编译警告为 0；矩阵关闭。
+- 5 个额外 ARM 固件实际保留 add_region、池、PMR 和真实 FreeRTOS 后端符号并链接；
+  仅放临时目录，未替换默认产物或烧录。未实例化时，各模式默认固件 text/data/bss 相同。
+- PUBLIC 最大容量定义已检查传播到 C 核心、C++ 池、FreeRTOS 后端及固件使用者。
+- 主机 GCC 15.2.0：Debug/Release × 65536/4096/6000/1024/0，共 10 组多区域检查通过：
+  满容量边界、精确非整次幂限制、错误地址/溢出/对齐、重叠与控制结构保护、
+  加入失败不写内存、登记上限、已有分配保持、逐段耗尽/复用、相邻独立边界、
+  所有段一致性/汇总统计、随机读写，以及四线程原始分配/PMR/统计与显式加段。
+- 原有基础池、统计、计数、guard、PMR 故障策略和 FreeRTOS API 模拟回归均通过；
+  Debug/Release 各覆盖 13 条同步终止路径；额外验证真实后端源码经模拟 API 管理两段内存。
+- ARM 编译验证 8 个容量配置，并拒绝 3 个非法核心定义；CMake 拒绝 4 个非法容量输入。
+- 主机核心继承上游 default_walker 的格式诊断，严格检查时仅对该第三方核心禁用 format 诊断；
+  自写 C++ 使用 Wall/Wextra/Werror/pedantic。没有为本轮改写上游诊断输出。
+- 检查程序和构建材料仅放临时目录或忽略的 build，不恢复 checks/tests/examples/tools/docs。
+- 尚未验证 STM32 实物上的不同 RAM 区域、长期调度、优先级继承时序或 DMA/Cache 行为。
+  分配器不推断物理内存属性。当前不提交、推送，也不自动实例化池或改通信资源路径。
+
 ## R2 PID、S 曲线和 PCcom
 
 三个模块直接加入 CMake 源码列表，不增加模块开关。应用按需包含头文件、
@@ -218,6 +491,7 @@ main 中先构造 USB 单例再初始化 USB 硬件，且只初始化一次；de
 | CMSIS-DSP v1.16.2 矩阵子集 | `Middlewares/Third_Party/CMSIS-DSP/LICENSE` |
 | STM32H7 CMSIS Device | `Drivers/CMSIS/Device/ST/STM32H7xx/LICENSE.txt` |
 | FreeRTOS | `Middlewares/Third_Party/FreeRTOS/Source/LICENSE` |
+| TLSF 3.1（可选） | `Middlewares/Third_Party/TLSF/tlsf.h` 内 BSD 三条款许可原文 |
 
 各组件的实际使用条件以各自许可证和源码声明为准。CubeMX 生成代码的原始 ST 版权头保持不变。
 

@@ -1,7 +1,7 @@
 /**
  * @file tlsf_memory_resource.hpp
  * @author Jinfei Luo
- * @brief 
+ * @brief 借用 TLSF 内存池的显式 PMR 内存资源适配器。
  * @version 0.1
  * @date 2026-10-30
  * 

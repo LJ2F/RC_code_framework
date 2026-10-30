@@ -1,6 +1,12 @@
 /**
  * @file tlsf_freertos_lock.hpp
+ * @author Jinfei Luo
  * @brief TLSF 可选的 FreeRTOS 静态互斥锁后端。
+ * @version 0.1
+ * @date 2026-10-30
+ * 
+ * @copyright Copyright (c) 2026
+ * 
  */
 #pragma once
 

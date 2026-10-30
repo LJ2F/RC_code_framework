@@ -234,7 +234,31 @@ enum tlsf_private
 	** blocks below that size into the 0th first-level list.
 	*/
 
-#if defined (TLSF_64BIT)
+#if TLSF_MAX_POOL_SIZE > 0
+    /* 本地修改：按最大区域字节数向上取整计算索引位数，块大小上界仍为开区间。 */
+    FL_INDEX_MAX =
+        TLSF_MAX_POOL_SIZE <= (1UL << 10) ? 10 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 11) ? 11 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 12) ? 12 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 13) ? 13 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 14) ? 14 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 15) ? 15 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 16) ? 16 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 17) ? 17 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 18) ? 18 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 19) ? 19 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 20) ? 20 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 21) ? 21 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 22) ? 22 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 23) ? 23 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 24) ? 24 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 25) ? 25 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 26) ? 26 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 27) ? 27 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 28) ? 28 :
+        TLSF_MAX_POOL_SIZE <= (1UL << 29) ? 29 :
+        30,
+#elif defined (TLSF_64BIT)
 	/*
 	** TODO: We can increase this to support larger sizes, at the expense
 	** of more overhead in the TLSF structure.
@@ -982,8 +1006,20 @@ pool_t tlsf_add_pool(tlsf_t tlsf, void* mem, size_t bytes)
 	block_header_t* block;
 	block_header_t* next;
 
-	const size_t pool_overhead = tlsf_pool_overhead();
-	const size_t pool_bytes = align_down(bytes - pool_overhead, ALIGN_SIZE);
+    const size_t pool_overhead = tlsf_pool_overhead();
+    size_t pool_bytes;
+    /* 本地修改：减去管理开销或写入区域之前，先拒绝不合法的参数和容量。 */
+    if (!tlsf || !mem || bytes < pool_overhead)
+    {
+        return 0;
+    }
+#if TLSF_MAX_POOL_SIZE > 0
+    if (bytes > (size_t)TLSF_MAX_POOL_SIZE)
+    {
+        return 0;
+    }
+#endif
+    pool_bytes = align_down(bytes - pool_overhead, ALIGN_SIZE);
 
 	if (((ptrdiff_t)mem % ALIGN_SIZE) != 0)
 	{
@@ -992,7 +1028,7 @@ pool_t tlsf_add_pool(tlsf_t tlsf, void* mem, size_t bytes)
 		return 0;
 	}
 
-	if (pool_bytes < block_size_min || pool_bytes > block_size_max)
+	if (pool_bytes < block_size_min || pool_bytes >= block_size_max)
 	{
 #if defined (TLSF_64BIT)
 		printf("tlsf_add_pool: Memory size must be between 0x%x and 0x%x00 bytes.\n", 

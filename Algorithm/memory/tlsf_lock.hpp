@@ -1,7 +1,7 @@
 /**
  * @file tlsf_lock.hpp
  * @author Jinfei Luo
- * @brief 
+ * @brief 与操作系统无关的 TLSF 锁接口及作用域锁守卫。
  * @version 0.1
  * @date 2026-10-30
  * 

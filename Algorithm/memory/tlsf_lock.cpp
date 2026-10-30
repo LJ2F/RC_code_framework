@@ -1,7 +1,7 @@
 /**
  * @file tlsf_lock.cpp
  * @author Jinfei Luo
- * @brief 
+ * @brief TLSF 作用域锁守卫实现。
  * @version 0.1
  * @date 2026-10-30
  * 
