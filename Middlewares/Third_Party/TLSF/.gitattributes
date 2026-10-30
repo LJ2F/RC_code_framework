@@ -1,0 +1,4 @@
+# Preserve the exact bytes of the pinned upstream files.
+tlsf.c -text
+tlsf.h -text
+README.md -text

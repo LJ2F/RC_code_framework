@@ -13,12 +13,17 @@ endif()
 
 option(RC_FRAMEWORK_ENABLE_USB "Enable USB CDC enumeration" ON)
 option(RC_FRAMEWORK_ENABLE_MATRIX "Enable fixed-size matrices and minimal CMSIS-DSP" OFF)
+option(RC_FRAMEWORK_ENABLE_TLSF "Enable the optional TLSF core and fixed-capacity C++ pool" OFF)
+option(RC_FRAMEWORK_ENABLE_TLSF_FREERTOS "Enable the optional static FreeRTOS mutex backend for TLSF" OFF)
 add_compile_definitions(RC_FRAMEWORK_ENABLE_MATRIX=$<BOOL:${RC_FRAMEWORK_ENABLE_MATRIX}>)
 add_compile_definitions(RC_FRAMEWORK_ENABLE_USB=$<BOOL:${RC_FRAMEWORK_ENABLE_USB}>)
+add_compile_definitions(RC_FRAMEWORK_ENABLE_TLSF=$<BOOL:${RC_FRAMEWORK_ENABLE_TLSF}>)
+add_compile_definitions(RC_FRAMEWORK_ENABLE_TLSF_FREERTOS=$<BOOL:${RC_FRAMEWORK_ENABLE_TLSF_FREERTOS}>)
 add_executable(${PROJECT_NAME})
 add_subdirectory(cmake/stm32cubemx)
 include(cmake/usb.cmake)
 include(cmake/matrix.cmake)
+include(cmake/tlsf.cmake)
 set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
     Module/controller Module/movebase Module/PCcom Module/imu Module/motor
