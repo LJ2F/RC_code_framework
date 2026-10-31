@@ -34,6 +34,7 @@ set(FRAMEWORK_INCLUDE_DIRS
 target_sources(${PROJECT_NAME} PRIVATE
     APP/app_init/app_init.cpp
     BSP/bsp_dwt.c BSP/CanBus.cpp BSP/UartPort.cpp
+    BSP/Module_GPIO.cpp BSP/RC_gpio_exti.cpp
     Module/controller/pid_controller.c
     Module/movebase/pathplanning.cpp Module/PCcom/PCcom.cpp
     Module/motor/djiMotor/djiMotor.cpp
