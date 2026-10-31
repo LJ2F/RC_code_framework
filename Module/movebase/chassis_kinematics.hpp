@@ -1,0 +1,111 @@
+// 来源：gdut-robocon11-second-group/robocon-library，提交 d21b3ccf822901dd22ba1e319298a8bdae3eaff7。
+// 本地调整：全向轮正解行与逆解列同步重排，统一采用麦克纳姆轮轮序，保留原系数。
+#ifndef MODULES_CHASSIS_KINEMATICS_HPP
+#define MODULES_CHASSIS_KINEMATICS_HPP
+
+#include "matrix.hpp"
+#include <numbers>
+/*
+约定：俯视机器人，车头朝上。
++vx 向前，+vy 向左，+omega 逆时针。
+全向轮正方向沿逆时针切向；麦轮正方向统一对应向前。
+统一轮序：(v1, v2, v3, v4) = (右前, 左前, 左后, 右后)。
+对应数组下标为 (0, 1, 2, 3)；轮序不等同于 CAN 电机 ID。
+
+        车头 ↑
+    v2 左前    右前 v1
+    v3 左后    右后 v4
+
+
+
+*/
+
+namespace gdut {
+
+/*
+ * @brief 底盘运动学类，提供机器人速度与轮速之间的正逆运动学计算方法
+ * @tparam Radius 轮子到机器人中心的距离，单位为米
+ */
+template <float Radius> class universal_wheel_kinematics {
+public:
+  static_assert(Radius > 0, "Radius must be greater than 0");
+
+  static constexpr float radius = Radius;
+  static constexpr float sqrt2 = std::numbers::sqrt2_v<float>;
+  static constexpr float inv_4times_sqrt2 = 1.0f / (4.0f * sqrt2);
+
+  // 1.414213f == sqrt(2)
+  static constexpr matrix<float, 4, 3> forward_kinematics_matrix{
+      sqrt2,  sqrt2,  radius, // v1：右前（原 v4）
+      -sqrt2, sqrt2,  radius, // v2：左前（原 v3）
+      -sqrt2, -sqrt2, radius, // v3：左后（原 v2）
+      sqrt2,  -sqrt2, radius  // v4：右后（原 v1）
+  };
+
+  //  0.176776f == 1 / (4 * sqrt(2))
+  static constexpr matrix<float, 3, 4> inverse_kinematics_matrix{
+      inv_4times_sqrt2,  -inv_4times_sqrt2, -inv_4times_sqrt2, inv_4times_sqrt2,
+      inv_4times_sqrt2,  inv_4times_sqrt2,  -inv_4times_sqrt2, -inv_4times_sqrt2,
+      0.25f / radius,    0.25f / radius,    0.25f / radius,    0.25f / radius};
+
+  /*
+   * @brief 计算机器人速度到轮速的转换
+   * @param velocities 机器人速度，格式为 (vx, vy, omega)，单位为 m/s 和 rad/s
+   * @return 轮速，格式为 (v1, v2, v3, v4)，单位为 m/s
+   */
+  static vector<float, 4>
+  forward_kinematics(const vector<float, 3> &velocities) {
+    return forward_kinematics_matrix * velocities;
+  };
+
+  /*
+   * @brief 计算轮速到机器人速度的转换
+   * @param wheel_velocities 轮速，格式为 (v1, v2, v3, v4)，单位为 m/s
+   * @return 机器人速度，格式为 (vx, vy, omega)，单位为 m/s 和 rad/s
+   */
+  static vector<float, 3>
+  inverse_kinematics(const vector<float, 4> &wheel_velocities) {
+    return inverse_kinematics_matrix * wheel_velocities;
+  }
+};
+template<float Radius>
+using chassis_kinematics = universal_wheel_kinematics<Radius>;
+
+template<float Width, float Length>
+class mcanum_wheel_kinematics {
+public:
+  static_assert(Width > 0, "Width must be greater than 0");
+  static_assert(Length > 0, "Length must be greater than 0");
+
+  static constexpr float width = Width;
+  static constexpr float length = Length;
+  static constexpr float mid = 0.5f * (width + length);
+  
+  static constexpr matrix<float, 4, 3> forward_kinematics_matrix{
+      1.0f, 1.0f, mid,
+      1.0f, -1.0f, -mid,
+      1.0f, 1.0f, -mid,
+      1.0f, -1.0f, mid};
+
+  static constexpr matrix<float, 3, 4> inverse_kinematics_matrix{
+      1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 4.0f, 1.0f 
+      / 4.0f,
+      1.0f / 4.0f, -1.0f / 4.0f, 1.0f / 4.0f, -1.0f / 4.0f,
+      1.0f / 4.0f / mid , -1.0f / 4.0f / mid, -1.0f / 4.0f / mid, 1.0f / 4.0f / mid
+  };
+
+  static vector<float, 4>
+  forward_kinematics(const vector<float, 3> &velocities) {
+    return forward_kinematics_matrix * velocities;
+  }
+
+  static vector<float, 3>
+  inverse_kinematics(const vector<float, 4> &wheel_velocities) {
+    return inverse_kinematics_matrix * wheel_velocities;
+  }
+
+};
+
+} // namespace gdut
+
+#endif // MODULES_CHASSIS_KINEMATICS_HPP

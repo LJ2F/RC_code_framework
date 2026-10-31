@@ -7,15 +7,16 @@
 | 目录 | 职责 |
 |---|---|
 | APP/app_init | C/C++ 共用的最小应用入口 App_Init |
-| BSP | CanBus / CanDevice、UartPort、DWT、DMA 缓冲属性 |
+| BSP | CanBus / CanDevice、UartPort、DWT、DMA 缓冲属性、轻量 H7 I2C 适配 |
 | Algorithm | 队列、双缓冲、数学工具、可选固定尺寸矩阵/向量 |
+| Module/kalman | 标准卡尔曼滤波 |
 | Module/controller | R2 原版 PID，替换原框架 PID |
-| Module/movebase | R2 原版 S 曲线规划器 |
+| Module/movebase | R2 原版 S 曲线规划器、独立底盘运动学 |
 | Module/PCcom | 保留原结构的 UART/USB 上位机通信，业务入口留空 |
 | Module/motor | MotorBase、DJI C610/C620、VESC、达妙 DM4310 |
 | Module/imu | 维特与 HWT101 欧拉角解析，单位度 |
 | Module/transfer_protocol | 校验算法、PMR 有界帧协议与通用传输适配 |
-| Module/servo / logger / xbox / infrared_com | PWM 舵机、串口日志、Xbox、红外 |
+| Module/servo / logger / xbox / infrared_com | PWM 舵机、PCA9685、串口日志、Xbox、红外 |
 | USB_DEVICE / Middlewares/ST | USB CDC 接入与 ST USB Device 中间件 |
 | Module/remote | 16 字节遥控协议、CRC、按键、掉线检测 |
 | Module/topics | 静态内存消息发布订阅 |
@@ -515,3 +516,123 @@ main 中先构造 USB 单例再初始化 USB 硬件，且只初始化一次；de
 ST usbd_cdc.c 的本地补丁传播 LL 发送返回值，
 配套 usbd_conf.c 在底层失败时先终止端点；其余中间件保留来源代码。
 新增功能没有替原作品增加许可证；使用者须遵守各来源已有许可和署名。
+
+## 标准卡尔曼、独立底盘运动学与 PCA9685
+
+这三组模块按最小改动迁入，不自动创建任务、设备对象或输出控制信号。
+卡尔曼与底盘运动学依赖现有矩阵后端，使用时按“可选矩阵计算”一节开启
+`RC_FRAMEWORK_ENABLE_MATRIX`；该选项默认值保持不变，本轮没有增加模块开关。
+
+### 标准卡尔曼
+
+`Module/kalman/kalman_filter.hpp` 提供 `gdut::kalman_filter<N, L, M, T>`：
+N 是状态维数，L 是控制输入维数，M 是观测维数，T 默认为 float。
+保留原构造、预测/校正、矩阵配置与状态读取接口；只提取标准版本，去掉未使用的旧内存资源、
+deque 和 PMR 头文件，不迁入自适应版本。`Algorithm/uncopyable.hpp` 为原样复制的依赖。
+
+~~~cpp
+#include "kalman_filter.hpp"
+
+void filter_step() {
+    using Mat = gdut::matrix<float, 1, 1>;
+    gdut::kalman_filter<1, 1, 1> filter(
+        Mat{1.0f}, Mat{0.0f}, Mat{1.0f}, Mat{0.1f}, Mat{0.2f});
+    filter.update_prediction(Mat{0.0f});
+    [[maybe_unused]] auto estimate = filter.update_correction(Mat{1.0f});
+}
+~~~
+
+上例仅演示一轮计算；连续估计时由应用保存同一个滤波器对象。
+默认观测矩阵为零，实际使用必须配置符合模型的 A/B/H/Q/R。
+算法仍调用原 inverse()，调用者须保证创新协方差可逆；沿用现有矩阵模块在 Debug
+断言、Release 返回零矩阵的求逆失败行为，本次没有改写数值算法或恢复策略。
+矩阵存储固定且不申请堆内存；对象和中间矩阵随维数增长，放入任务前需要核算栈空间。
+
+### 独立底盘运动学
+
+`Module/movebase/chassis_kinematics.hpp` 只计算车体速度与四轮速度之间的变换：
+
+| 原接口 | 几何参数 |
+|---|---|
+| `gdut::universal_wheel_kinematics<Radius>` | 轮子到车体中心的距离，单位米 |
+| `gdut::chassis_kinematics<Radius>` | 上一类的原别名 |
+| `gdut::mcanum_wheel_kinematics<Width, Length>` | 保留原拼写，使用 `mid = (Width + Length) / 2` |
+
+~~~cpp
+#include "chassis_kinematics.hpp"
+
+void kinematics_step() {
+    using Chassis = gdut::chassis_kinematics<0.3f>;
+    gdut::vector<float, 3> velocity{1.0f, 0.0f, 0.0f};
+    auto wheels = Chassis::forward_kinematics(velocity);
+    [[maybe_unused]] auto restored = Chassis::inverse_kinematics(wheels);
+}
+~~~
+
+车体输入顺序为 vx、vy、omega，原注释单位为 m/s、m/s、rad/s，输出沿用原轮速单位 m/s。
+Radius 不是轮子自身半径，结果也不是电机 RPM。俯视车头朝上，+vx 向前、+vy 向左、
++omega 逆时针；全向轮正方向沿逆时针切向，麦克纳姆轮正方向统一对应向前。
+两套模型现在统一采用以下输入/输出轮序：
+
+| 向量分量 | 数组下标 | 轮子位置 |
+|---|---|---|
+| v1 | wheels[0] | 右前 |
+| v2 | wheels[1] | 左前 |
+| v3 | wheels[2] | 左后 |
+| v4 | wheels[3] | 右后 |
+
+全向轮正解按原 v4/v3/v2/v1 重排行，逆解同步重排列；原数值系数和麦克纳姆轮矩阵保持不变。
+电机正负号、安装方向、轮径/RPM 换算由应用按实物核对，轮序不是 CAN 电机 ID。
+本模块没有绑定电机、PID、S 曲线、Topics 或遥控策略。
+
+### PCA9685 与轻量 H7 I2C 适配
+
+`Module/servo/bsp_pca9685.hpp/.cpp` 保留 `gdut::pca9685(gdut::i2c&, address)`
+以及原寄存器、PWM、舵机、休眠/唤醒接口。驱动仅将 F4 HAL 头文件替换为 H7，
+移除未使用的 clock.hpp；寄存器操作、参数裁剪和计算逻辑保持原样。
+
+`BSP/bsp_iic.hpp` 从原 I2C 封装提取构造、mem_write、mem_read、is_device_ready、
+超时转换和不可复制/移动约定，切换到本框架的 H7 HAL。它只借用 HAL 句柄，
+不包含原 F4 外设配置、DMA 或中断回调体系，不初始化总线或接管引脚。
+
+~~~cpp
+#include "bsp_pca9685.hpp"
+
+// 调用前，由应用完成 H723 I2C 时钟、引脚、Timing 和 HAL 句柄初始化。
+HAL_StatusTypeDef configure_servo(I2C_HandleTypeDef& handle) {
+    gdut::i2c bus(&handle);
+    gdut::pca9685 pwm(bus);
+    auto status = pwm.init(50.0f);
+    if (status != HAL_OK) {
+        return status;
+    }
+    return pwm.set_servo_angle(0, 90.0f);
+}
+~~~
+
+上例只有被显式调用时才配置芯片并设置输出。构造函数本身不访问硬件；
+init() 成功后按原实现将全部通道关闭，再由应用设置需要的通道。
+设备默认 7 位地址为 0x40，传入驱动的是已左移的 HAL 地址 0x80。
+16 通道共用频率；保留原内部 25 MHz 假定、频率裁剪、12 位占空值及舵机脉宽换算。
+相关硬件定义见 [NXP PCA9685 数据手册](https://www.nxp.com/docs/en/data-sheet/PCA9685.pdf)。
+
+这是原阻塞 I2C 路径，读写超时仍为 20 ms，初始化含 HAL_Delay；
+在任务上下文使用。同一总线多使用者由应用串行化，句柄、总线适配对象须覆盖使用者生命周期。
+空句柄返回 HAL_ERROR，HAL_BUSY/HAL_TIMEOUT/错误状态直接返回。
+输入约束沿用原实现，调用者应提供有限数值；本轮没有增加非有限数值处理或新的控制功能。
+当前框架没有预设 I2C 实例，CubeMX 引脚、时钟、Timing、上拉及 PCA9685 的 OE/供电需按实物接入。
+
+### 来源与本轮验证
+
+来源：[gdut-robocon11-second-group/robocon-library](https://github.com/gdut-robocon11-second-group/robocon-library/tree/d21b3ccf822901dd22ba1e319298a8bdae3eaff7)，
+固定提交 d21b3ccf822901dd22ba1e319298a8bdae3eaff7。
+卡尔曼与 uncopyable 来自 Components；底盘与 PCA9685 来自 Modules；
+轻量 I2C 来自 `BSP/bsp_iic.hpp` 的必要子集。保留原注释与声明，没有新增或替换原作许可。
+
+- Arm GNU GCC 15.2.1、C11/C++23：Debug/Release 各验证“矩阵关、USB 开”和“矩阵开、USB 关”，4 组全新配置构建通过、零编译警告。
+- 另有 Debug/Release 两组矩阵与 USB 同时开启的 ARM 固件，强制保留并链接新模块实际引用；通过且零编译警告。测试入口未由启动代码调用。
+- 5 个新增公共头文件分别以真实 H723 编译选项进行独立及重复包含检查，通过。
+- 主机 GCC 15.2.0、C++23、无异常/RTTI：Debug/Release 的标量与 6 状态卡尔曼 float/double 参考计算、全向轮及麦克纳姆轮正逆往返检查通过。
+- PCA9685 HAL 模拟覆盖初始化顺序、寄存器/地址/超时传递、PWM/舵机端点与限幅、空句柄及 27 条 HAL 错误/忙碌/超时与后续恢复路径。模拟检查不代表真实总线时序已验证。
+- 验证程序、日志仅存本机临时目录，构建产物在忽略的 build 目录；没有恢复 checks/tests/examples/tools/docs。
+- 未连接硬件：I2C 应答、实际 PWM 频率/脉宽、OE 行为、舵机动作及真实底盘方向与尺度均未验证。PID、电机、S 曲线和 TLSF 保持本轮前内容。

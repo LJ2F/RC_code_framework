@@ -27,7 +27,7 @@ include(cmake/matrix.cmake)
 include(cmake/tlsf.cmake)
 set(FRAMEWORK_INCLUDE_DIRS
     APP/app_init BSP Algorithm
-    Module/controller Module/movebase Module/PCcom Module/imu Module/motor
+    Module/controller Module/kalman Module/movebase Module/PCcom Module/imu Module/motor
     Module/motor/djiMotor Module/motor/dmMotor Module/motor/vescMotor
     Module/remote Module/topics Module/transfer_protocol
     Module/logger Module/servo Module/xbox Module/infrared_com)
@@ -38,7 +38,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     Module/movebase/pathplanning.cpp Module/PCcom/PCcom.cpp
     Module/motor/djiMotor/djiMotor.cpp
     Module/remote/Remote_receiver.cpp Module/topics/topics.cpp
-    Module/xbox/XboxRemote.cpp Module/imu/Hwt101.cpp)
+    Module/xbox/XboxRemote.cpp Module/imu/Hwt101.cpp
+    Module/servo/bsp_pca9685.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE ${FRAMEWORK_INCLUDE_DIRS})
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 target_link_libraries(${PROJECT_NAME} stm32cubemx)
